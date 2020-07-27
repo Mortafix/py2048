@@ -1,11 +1,13 @@
-from random import randint,random
+from functools import reduce
+from random import choice,random
 import sys,tty,termios
 from math import log2
+from time import sleep
 
-moveset = {'\x1b[A':'UP','\x1b[B':'DOWN','\x1b[C':'RIGHT','\x1b[D':'LEFT'}
-TEST_BOARD = [[2,4,8,16],[32,64,128,256],[512,1024,2048,4096],[8192,16384,32768,65536]]
-BOARD = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
-COLORS = ['','\033[38;5;226m','\033[38;5;208m','\033[38;5;196m','\033[38;5;199m','\033[38;5;207m','\033[38;5;128m','\033[38;5;057m','\033[38;5;021m','\033[38;5;045m','\033[38;5;036m','\033[38;5;028m','\033[38;5;010m']
+MOVESET = {'\x1b[A':'UP','\x1b[B':'DOWN','\x1b[C':'RIGHT','\x1b[D':'LEFT'}
+BOARD = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+VALUE = [50,30,15,5,-10,20,10,5,0,0,0,0,0,0,0,0]
+COLORS = ['148','226','208','196','199','207','128','057','021','045','036','028','010']
 BOLD = '\033[1m'
 UNDERLINE = '\033[4m'
 ENDC = '\033[0m'
@@ -22,52 +24,59 @@ class _Getch:
 			termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 		return ch
 
-def spawn_random():
-	if all([all([e for e in line]) for line in BOARD]): return -1
-	row,col = randint(0,len(BOARD)-1),randint(0,len(BOARD)-1)
-	while BOARD[row][col] != 0:
-		row,col = randint(0,len(BOARD)-1),randint(0,len(BOARD)-1)
-	BOARD[row][col] = 4 if random() > 0.9 else 2 
+def score_board(): return sum([2**n for n in BOARD if n])
 
-def move_line(l):
-	global POINTS
-	no_zero = [e for e in l if e]
-	for i in range(len(no_zero)):
-		if i+1 < len(no_zero) and no_zero[i] == no_zero[i+1]:
-			POINTS += no_zero[i+1]
-			no_zero[i+1] *= 2
-			no_zero = no_zero[:i] + no_zero[i+1:]
-			i += 1
-	return no_zero
+def value_board(board): return sum([board[i]*VALUE[i] for i in range(16)]) if board else -1
 
-def move(where):
-	board = list(map(list, zip(*BOARD))) if where in ['UP','DOWN'] else BOARD
-	direction = 1 if where in ['LEFT','UP'] else -1
-	result = [(line+[0]*(len(BOARD)-len(line)))[::direction] for line in [move_line(line[::direction]) for line in board]]
-	return list(map(list, zip(*result))) if where in ['UP','DOWN'] else result
+def spawn_random(board): 
+	try: board[choice([i for i in range(16) if board[i] == 0])] = 2 if random() > 0.9 else 1
+	except IndexError: return board
 
-def color_number(n):
-	if n == 0: return '{}{}{}'.format(COLORS[1],'     ',ENDC)
-	power2 = int(log2(n)%13) if n < 5000 else int(log2(n)%13) + 1
-	return '{}{}{}'.format(COLORS[power2],n,ENDC)
+def move_line(l,direction): return reduce(lambda x,y: x[:-1]+[y+1] if x[-1] == y else x+[y],[e for e in l[::direction] if e],[0])[1:][::direction]
 
-def cancel_board():
-	print(ERASE*12)
+def perform_move(board,move):
+	direction = (-1,1)[move in ('LEFT','UP')]
+	board = (board,[board[i*4+j] for j in range(4) for i in range(4)])[move in ('UP','DOWN')]
+	result = reduce(lambda x,y:x+y if direction > 0 else x+y,[x+[0]*(4-len(x)) if direction > 0 else [0]*(4-len(x))+x for x in [move_line(board[i*4:i*4+4],direction) for i in range(4)]])
+	new_board =(result,[result[i*4+j] for j in range(4) for i in range(4)])[move in ('UP','DOWN')]
+	spawn_random(new_board)
+	return new_board
+
+def best_move(board,depth=1):
+	if depth == 4: return max([value_board(valid_move(board,move)) for move in ['UP','DOWN','RIGHT','LEFT']])
+	return max([(best_move(perform_move(board,move),depth+1),move) for move in ['UP','DOWN','RIGHT','LEFT']])[1]
+
+def valid_move(board,move):
+	next_board = perform_move(board,move)
+	return next_board if next_board != BOARD else None
+
+def cell_number(n):
+	if n == 0: return f'\033[38;5;120m     {ENDC}'
+	return f'\033[38;5;{COLORS[n%13]}m{2**n}{ENDC}'
+
+def cancel_board(): print(ERASE*12)
 
 def print_board():
 	hline = BOLD+'-'*30+ENDC
 	print(hline)
-	print( '\n'.join(['{}\n{}'.format((' '+BOLD+'|'+ENDC+' ').join(['{:<20}'.format(color_number(cell)) for cell in line]),hline) for line in BOARD]) )
+	print( '\n'.join(['{}\n{}'.format((' '+BOLD+'|'+ENDC+' ').join(['{:<20}'.format(cell_number(cell)) for cell in BOARD[i*4:i*4+4]]),hline) for i in range(4)]) )
 
 if __name__ == '__main__':
 	inkey = _Getch()
-	global POINTS
 	POINTS = 0
-	for _ in range(3): spawn_random()
-	while True:
-		cancel_board()
-		print('{2}Points{3} {1}{0}{3}\n'.format(POINTS,'\033[38;5;150m',UNDERLINE,ENDC))
-		print_board()
-		inp = inkey()
-		BOARD = move(moveset.get(inp)) if moveset.get(inp) else exit(-1)
-		spawn_random()
+	for _ in range(2): spawn_random(BOARD)
+	try:
+		while True:
+			# print
+			print(f'{UNDERLINE}Points{ENDC} \033[38;5;150m{score_board()}{ENDC}\n')
+			print_board()
+			# key input
+			#inp = inkey()
+			# perform move
+			#print(best_move())
+			#if is_valid_move(MOVESET.get(inp)):
+			BOARD = perform_move(BOARD,best_move(BOARD))
+			#spawn_random()
+			#sleep(2)
+			cancel_board()
+	except ValueError: print('Game Over.')
